@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>StreetRelief & LostFound - Hyper-Local Community App</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    #map { height: 100vh; width: 100vw; z-index: 1; }
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 overflow-hidden font-sans">
+
+  <!-- Floating Header / Navbar -->
+  <header class="fixed top-4 left-4 right-4 z-10 glass-panel border border-slate-700/50 rounded-2xl p-3 flex justify-between items-center shadow-2xl">
+    <div class="flex items-center space-x-2">
+      <div class="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl">
+        <i data-lucide="compass"></i>
+      </div>
+      <div>
+        <h1 class="font-bold text-sm leading-tight text-white">StreetRelief Hub</h1>
+        <p class="text-[10px] text-slate-400">Emergency Spots & Lost and Found</p>
+      </div>
+    </div>
+    <button id="toggle-tracking" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition">
+      <span class="w-2 h-2 rounded-full bg-slate-500" id="tracking-status-dot"></span>
+      <span id="tracking-text">Rute Off</span>
+    </button>
+  </header>
+
+  <!-- Peta Utama -->
+  <div id="map"></div>
+
+  <!-- Action Bar (Floating Bottom Menu) -->
+  <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-3 glass-panel px-4 py-3 rounded-full border border-slate-700/50 shadow-2xl">
+    <button onclick="centerMap()" class="p-3 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-200 transition">
+      <i data-lucide="crosshair"></i>
+    </button>
+    <button onclick="openCameraModal()" class="px-5 py-3 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold rounded-full flex items-center gap-2 shadow-lg shadow-emerald-500/20 transition">
+      <i data-lucide="camera"></i>
+      <span>Tandai Lokasi / Temuan</span>
+    </button>
+  </div>
+
+  <!-- Modal Kamera & Form Tambah Titik -->
+  <div id="camera-modal" class="fixed inset-0 z-50 bg-slate-950/90 hidden flex-col justify-between p-4 backdrop-blur-md">
+    <!-- Header Modal -->
+    <div class="flex justify-between items-center">
+      <span class="text-sm font-semibold text-slate-300">Ambil Foto & Kategori</span>
+      <button onclick="closeCameraModal()" class="p-2 text-slate-400 hover:text-white">
+        <i data-lucide="x"></i>
+      </button>
+    </div>
+
+    <!-- Viewfinder Kamera & Form Preview -->
+    <div class="my-auto max-w-md w-full mx-auto space-y-4">
+      <div class="relative aspect-[3/4] bg-black rounded-2xl overflow-hidden border border-slate-800 shadow-2xl flex items-center justify-center">
+        <video id="webcam" autoplay playsinline class="w-full h-full object-cover"></video>
+        <canvas id="canvas" class="hidden"></canvas>
+        <img id="photo-preview" class="w-full h-full object-cover hidden" />
+      </div>
+
+      <!-- Controls Form -->
+      <div id="form-controls" class="space-y-3">
+        <select id="spot-category" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
+          <optgroup label="Fasilitas Darurat & Informal">
+            <option value="Tambal Ban">🔧 Tambal Ban / Bengkel</option>
+            <option value="Warkop">☕ Warkop / Tempat Istirahat</option>
+            <option value="Pangkalan Ojek">🛵 Pangkalan Ojek / Basecamp Ojol</option>
+            <option value="Pasar / Toko">🛒 Pasar / Toko Kelontong</option>
+          </optgroup>
+          <optgroup label="Fitur Sosial">
+            <option value="Barang Temuan">🚨 Barang Hilang / Temuan (Lost & Found)</option>
+          </optgroup>
+        </select>
+        <input type="text" id="spot-note" placeholder="Keterangan (Cth: Ditemukan dompet hitam di trotoar, diamankan di rumahku)" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+      </div>
+    </div>
+
+    <!-- Bottom Camera Actions -->
+    <div class="max-w-md w-full mx-auto flex justify-center items-center gap-4 py-2">
+      <button id="snap-btn" onclick="takePhoto()" class="w-16 h-16 rounded-full border-4 border-white bg-emerald-500 flex items-center justify-center shadow-lg active:scale-95 transition"></button>
+      <button id="save-btn" onclick="saveSpot()" class="hidden w-full py-3.5 bg-emerald-500 text-slate-950 font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg">
+        <i data-lucide="check"></i> Publikasikan ke Peta
+      </button>
+    </div>
+  </div>
+
+  <!-- Javascript Logic -->
+  <script>
+    // 1. Inisialisasi Icons & Peta
+    lucide.createIcons();
+    const map = L.map('map', { zoomControl: false }).setView([-6.200000, 106.816666], 13);
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap © CARTO'
+    }).addTo(map);
+
+    let userLocation = null;
+    let userMarker = null;
+    let isTracking = false;
+    let routeCoords = [];
+    let routePolyline = L.polyline([], { color: '#10b981', weight: 4 }).addTo(map);
+
+    // 2. Geolocation Tracking
+    if ("geolocation" in navigator) {
+      navigator.geolocation.watchPosition(position => {
+        const { latitude, longitude } = position.coords;
+        userLocation = [latitude, longitude];
+
+        if (!userMarker) {
+          userMarker = L.circleMarker(userLocation, {
+            radius: 8,
+            fillColor: "#10b981",
+            color: "#ffffff",
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.9
+          }).addTo(map);
+          map.setView(userLocation, 16);
+        } else {
+          userMarker.setLatLng(userLocation);
+        }
+
+        if (isTracking) {
+          routeCoords.push(userLocation);
+          routePolyline.setLatLngs(routeCoords);
+        }
+      }, err => console.error(err), { enableHighAccuracy: true });
+    }
+
+    function centerMap() {
+      if (userLocation) map.flyTo(userLocation, 17);
+    }
+
+    document.getElementById('toggle-tracking').addEventListener('click', () => {
+      isTracking = !isTracking;
+      const dot = document.getElementById('tracking-status-dot');
+      const text = document.getElementById('tracking-text');
+
+      if (isTracking) {
+        dot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
+        text.innerText = "Merekam Rute";
+      } else {
+        dot.className = "w-2 h-2 rounded-full bg-slate-500";
+        text.innerText = "Rute Off";
+      }
+    });
+
+    // 3. Logika Kamera HD
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('canvas');
+    const preview = document.getElementById('photo-preview');
+    let stream = null;
+
+    async function openCameraModal() {
+      document.getElementById('camera-modal').classList.remove('hidden');
+      document.getElementById('camera-modal').classList.add('flex');
+      
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { exact: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false
+        });
+        video.srcObject = stream;
+      } catch (err) {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        video.srcObject = stream;
+      }
+    }
+
+    function closeCameraModal() {
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      document.getElementById('camera-modal').classList.add('hidden');
+      document.getElementById('camera-modal').classList.remove('flex');
+      resetCameraUI();
+    }
+
+    function takePhoto() {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      
+      const photoData = canvas.toDataURL('image/jpeg', 0.85);
+      preview.src = photoData;
+      
+      video.classList.add('hidden');
+      preview.classList.remove('hidden');
+      
+      document.getElementById('snap-btn').classList.add('hidden');
+      document.getElementById('save-btn').classList.remove('hidden');
+    }
+
+    function resetCameraUI() {
+      video.classList.remove('hidden');
+      preview.classList.add('hidden');
+      document.getElementById('snap-btn').classList.remove('hidden');
+      document.getElementById('save-btn').classList.add('hidden');
+    }
+
+    // 4. Menyimpan Spot & Penanda Khusus Barang Temuan
+    function saveSpot() {
+      if (!userLocation) {
+        alert("Lokasi GPS belum ditemukan!");
+        return;
+      }
+
+      const category = document.getElementById('spot-category').value;
+      const note = document.getElementById('spot-note').value;
+      const photoSrc = preview.src;
+
+      // Warna khusus jika kategori "Barang Temuan"
+      const isLostAndFound = category === "Barang Temuan";
+      
+      const marker = L.marker(userLocation).addTo(map);
+      marker.bindPopup(`
+        <div class="p-1 text-slate-900 max-w-xs">
+          <img src="${photoSrc}" class="w-full h-32 object-cover rounded-lg mb-2"/>
+          <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded font-bold ${isLostAndFound ? 'bg-amber-500 text-white' : 'bg-emerald-500 text-slate-950'}">
+            ${category}
+          </span>
+          <p class="text-xs text-slate-700 mt-2 font-medium">${note || 'Tidak ada keterangan.'}</p>
+          ${isLostAndFound ? '<p class="text-[10px] text-red-500 font-semibold mt-1">⚠️ Barang diamankan oleh penemu.</p>' : ''}
+        </div>
+      `);
+
+      closeCameraModal();
+      alert(isLostAndFound ? "Informasi barang temuan berhasil disiarkan ke peta!" : "Spot berhasil disimpan ke peta!");
+    }
+  </script>
+</body>
+</html>
